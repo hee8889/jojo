@@ -17,7 +17,7 @@ local LocalPlayer      = Players.LocalPlayer
 --              AUTO EXECUTE SETUP
 -- เซฟ script ลง autoexec ให้รันอัตโนมัติทุกครั้ง
 --==================================================
-local SCRIPT_URL = "https://raw.githubusercontent.com/deividcomsono/Obsidian/main/" -- เปลี่ยนเป็น URL script จริงของคุณ
+local SCRIPT_URL = "https://raw.githubusercontent.com/hee8889/jojo/refs/heads/main/script.lua" -- เปลี่ยนเป็น URL script จริงของคุณ
 local AUTOEXEC_SCRIPT = [[
 -- Baramee Hub Auto Execute
 loadstring(game:HttpGet("]] .. SCRIPT_URL .. [["))()
@@ -29,7 +29,7 @@ pcall(function()
         makefolder("autoexec")
     end
     -- เซฟ script
-    writefile("autoexec/BarameeHub.lua", AUTOEXEC_SCRIPT)
+    writefile("workspace/autoexec/BarameeHub.lua", AUTOEXEC_SCRIPT)
     print("✓ Auto Execute ถูกเซฟแล้ว")
 end)
 
@@ -429,27 +429,30 @@ AutoBox:AddDivider()
 -- ปุ่มจัดการ Auto Execute
 AutoBox:AddButton({
     Text = "💾 บันทึก Auto Execute",
-    Tooltip = "เซฟ script ลง autoexec ให้รันอัตโนมัติทุกครั้งที่เปิด executor",
     Func = function()
-        pcall(function()
-            if not isfolder("autoexec") then makefolder("autoexec") end
-            local scriptContent = 'loadstring(game:HttpGet("https://github.com/hee8889/jojo/blob/main/script.lua"))()'
-            writefile("autoexec/BarameeHub.lua", scriptContent)
-            Library:Notify("✓ บันทึก Auto Execute แล้ว\nจะรัน script อัตโนมัติทุกครั้ง", 4)
+        local ok, err = pcall(function()
+            makefolder("workspace/autoexec")
+            writefile("workspace/autoexec/BarameeHub.lua", 'loadstring(game:HttpGet("https://raw.githubusercontent.com/hee8889/jojo/refs/heads/main/script.lua"))()')
         end)
+        if ok then
+            Library:Notify("✅ บันทึกสำเร็จ!", 4)
+        else
+            Library:Notify("❌ " .. tostring(err), 5)
+        end
     end,
 })
+
 AutoBox:AddButton({
     Text = "🗑️ ลบ Auto Execute",
     Func = function()
-        pcall(function()
-            if isfile("autoexec/BarameeHub.lua") then
-                delfile("autoexec/BarameeHub.lua")
-                Library:Notify("✓ ลบ Auto Execute แล้ว", 3)
-            else
-                Library:Notify("ไม่พบไฟล์ Auto Execute", 3)
-            end
+        local ok, err = pcall(function()
+            delfile("workspace/autoexec/BarameeHub.lua")
         end)
+        if ok then
+            Library:Notify("✅ ลบสำเร็จ!", 3)
+        else
+            Library:Notify("❌ " .. tostring(err), 4)
+        end
     end,
 })
 
