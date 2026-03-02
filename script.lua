@@ -15,25 +15,24 @@ local LocalPlayer      = Players.LocalPlayer
 
 --==================================================
 --              AUTO EXECUTE SETUP
--- บันทึกอัตโนมัติตอนโหลด Script ครั้งแรก
+-- เซฟ script ลง autoexec ให้รันอัตโนมัติทุกครั้ง
 --==================================================
-local SCRIPT_RAW_URL = "https://raw.githubusercontent.com/hee8889/jojo/refs/heads/main/script.lua"
-local AUTOEXEC_FILE  = "autoexec/BarameeHub.lua"
-local AUTOEXEC_CONTENT = 'loadstring(game:HttpGet("' .. SCRIPT_RAW_URL .. '"))()'
+local SCRIPT_URL = "https://raw.githubusercontent.com/deividcomsono/Obsidian/main/" -- เปลี่ยนเป็น URL script จริงของคุณ
+local AUTOEXEC_SCRIPT = [[
+-- Baramee Hub Auto Execute
+loadstring(game:HttpGet("]] .. SCRIPT_URL .. [["))()
+]]
 
 pcall(function()
+    -- สร้าง autoexec folder ถ้ายังไม่มี
     if not isfolder("autoexec") then
         makefolder("autoexec")
     end
-    if not isfile(AUTOEXEC_FILE) then
-        writefile(AUTOEXEC_FILE, AUTOEXEC_CONTENT)
-        print("✓ Auto Execute ถูกบันทึกอัตโนมัติแล้ว")
-    end
+    -- เซฟ script
+    writefile("autoexec/BarameeHub.lua", AUTOEXEC_SCRIPT)
+    print("✓ Auto Execute ถูกเซฟแล้ว")
 end)
 
---==================================================
---                   WINDOW
---==================================================
 local Window = Library:CreateWindow({
     Title            = "Baramee Hub",
     Center           = true,
@@ -425,56 +424,30 @@ AutoBox:AddSlider("AutoPlayDelay", {
     Text = "Delay ก่อนกด (วินาที)", Default = 1, Min = 0, Max = 5, Rounding = 1,
     Callback = function(v) flags.AutoPlayDelay = v end,
 })
-
 AutoBox:AddDivider()
 
---==================================================
---         AUTO EXECUTE BUTTONS (เปิด / ปิด)
---==================================================
-
--- แสดงสถานะปัจจุบันตอนโหลด
-pcall(function()
-    local status = isfile(AUTOEXEC_FILE) and "✅ Auto Execute: เปิดอยู่" or "❌ Auto Execute: ปิดอยู่"
-    AutoBox:AddLabel(status)
-end)
-
+-- ปุ่มจัดการ Auto Execute
 AutoBox:AddButton({
-    Text = "💾 เปิด Auto Execute",
-    Tooltip = "บันทึก script ลง autoexec → รัน Hub อัตโนมัติทุกครั้งที่ Rejoin",
+    Text = "💾 บันทึก Auto Execute",
+    Tooltip = "เซฟ script ลง autoexec ให้รันอัตโนมัติทุกครั้งที่เปิด executor",
     Func = function()
         pcall(function()
             if not isfolder("autoexec") then makefolder("autoexec") end
-            writefile(AUTOEXEC_FILE, AUTOEXEC_CONTENT)
-            Library:Notify("✅ เปิด Auto Execute แล้ว!\nHub จะรันอัตโนมัติทุกครั้งที่ Rejoin", 4)
-            print("✓ Auto Execute เปิดแล้ว")
+            local scriptContent = 'loadstring(game:HttpGet("https://github.com/hee8889/jojo/blob/main/script.lua"))()'
+            writefile("autoexec/BarameeHub.lua", scriptContent)
+            Library:Notify("✓ บันทึก Auto Execute แล้ว\nจะรัน script อัตโนมัติทุกครั้ง", 4)
         end)
     end,
 })
-
 AutoBox:AddButton({
-    Text = "🗑️ ปิด Auto Execute",
-    Tooltip = "ลบไฟล์ autoexec → Hub จะไม่รันอัตโนมัติแล้ว",
+    Text = "🗑️ ลบ Auto Execute",
     Func = function()
         pcall(function()
-            if isfile(AUTOEXEC_FILE) then
-                delfile(AUTOEXEC_FILE)
-                Library:Notify("❌ ปิด Auto Execute แล้ว\nHub จะไม่รันอัตโนมัติอีกต่อไป", 4)
-                print("✓ Auto Execute ปิดแล้ว")
+            if isfile("autoexec/BarameeHub.lua") then
+                delfile("autoexec/BarameeHub.lua")
+                Library:Notify("✓ ลบ Auto Execute แล้ว", 3)
             else
-                Library:Notify("⚠️ ไม่พบไฟล์ Auto Execute\n(ปิดอยู่แล้ว)", 3)
-            end
-        end)
-    end,
-})
-
-AutoBox:AddButton({
-    Text = "🔍 เช็คสถานะ Auto Execute",
-    Func = function()
-        pcall(function()
-            if isfile(AUTOEXEC_FILE) then
-                Library:Notify("✅ Auto Execute: เปิดอยู่\nHub จะรันอัตโนมัติทุกครั้งที่ Rejoin", 4)
-            else
-                Library:Notify("❌ Auto Execute: ปิดอยู่\nกด 'เปิด Auto Execute' เพื่อเปิด", 4)
+                Library:Notify("ไม่พบไฟล์ Auto Execute", 3)
             end
         end)
     end,
@@ -687,11 +660,12 @@ RunService.Heartbeat:Connect(function()
 end)
 
 task.spawn(function()
-    local tabOpened = false
-    local lastTarget = nil
+    local tabOpened = false      -- เช็คว่ากด Tab เปิดไปแล้วหรือยัง
+    local lastTarget = nil       -- จำเป้าหมายล่าสุด
 
     while task.wait() do
         if not flags.AutoNearest then
+            -- ถ้าปิด AutoNearest และ Tab เปิดอยู่ ให้กด Tab ปิด
             if tabOpened then
                 pressKey(Enum.KeyCode.Tab)
                 tabOpened = false
@@ -705,16 +679,19 @@ task.spawn(function()
         local alive = tgt and hum and hum.Health > 0
 
         if alive then
+            -- เป้าใหม่หรือยังไม่เคยกด Tab → กด Tab เปิด
             if not tabOpened or lastTarget ~= tgt then
                 pressKey(Enum.KeyCode.Tab)
                 task.wait(0.1)
                 tabOpened = true
                 lastTarget = tgt
             end
+            -- M1 + Skill
             clickM1()
             spamAllSkills()
             task.wait((flags.NearestAtkDelay or 5) * 0.01)
         else
+            -- เป้าตายแล้ว → กด Tab ปิด
             if tabOpened then
                 pressKey(Enum.KeyCode.Tab)
                 task.wait(0.1)
@@ -746,8 +723,10 @@ SaveManager:SetFolder("BarameeHub/game")
 SaveManager:BuildConfigSection(Tabs.Settings)
 ThemeManager:ApplyToTab(Tabs.Settings)
 
+-- ✅ โหลด config ที่ mark autoload ไว้ → เปิด toggle ที่เคย save ไว้อัตโนมัติ
 SaveManager:LoadAutoloadConfig()
 
+-- ✅ หลังโหลด config แล้ว sync flags ให้ตรงกับ Toggles
 task.wait(1)
 flags.AutoPlay    = Toggles.AutoPlay    and Toggles.AutoPlay.Value    or false
 flags.AutoNearest = Toggles.AutoNearest and Toggles.AutoNearest.Value or false
@@ -757,16 +736,6 @@ if flags.AutoNearest then Library:Notify("✓ Auto Nearest เปิดอัต
 task.spawn(function()
     task.wait(3)
     loadNPCList(nil)
-end)
-
--- แจ้งสถานะ Auto Execute ตอนโหลด
-pcall(function()
-    task.wait(1.5)
-    if isfile(AUTOEXEC_FILE) then
-        Library:Notify("✅ Auto Execute: เปิดอยู่\nHub จะรันอัตโนมัติทุกครั้งที่ Rejoin", 4)
-    else
-        Library:Notify("❌ Auto Execute: ปิดอยู่\nไปที่ Auto Play → กด 'เปิด Auto Execute'", 5)
-    end
 end)
 
 print("✓ Baramee Hub Loaded!")
