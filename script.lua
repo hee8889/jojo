@@ -232,7 +232,6 @@ task.spawn(function()
     while task.wait(0.5) do
         if not flags.AutoPlay then continue end
 
-        -- กด Quick Play
         local mm = pgui:FindFirstChild("Main Menu")
         if mm and mm.Enabled then
             local buttons = mm:FindFirstChild("Buttons")
@@ -248,7 +247,6 @@ task.spawn(function()
             end
         end
 
-        -- กด Play Again
         local rc = pgui:FindFirstChild("raidcomplete")
         if rc and rc.Enabled then
             local raid = rc:FindFirstChild("raid")
@@ -328,7 +326,15 @@ CombatBox:AddLabel("Toggle Auto Attack"):AddKeyPicker("AutoAtkBind", {
 })
 CombatBox:AddDivider()
 
-CombatBox:AddToggle("AutoNearest", { Text = "⚡ Auto ตีใกล้สุด (All-in-One)", Default = false, Callback = function(v) flags.AutoNearest = v end })
+-- AutoNearest Toggle → Tab เมื่อเปิด และ Tab เมื่อปิด
+CombatBox:AddToggle("AutoNearest", {
+    Text = "⚡ Auto ตีใกล้สุด (All-in-One)", Default = false,
+    Callback = function(v)
+        flags.AutoNearest = v
+        -- Tab 1 ครั้งเพื่อเปิดอาวุธตอนเปิด / ปิดอาวุธตอนปิด
+        pressKey(Enum.KeyCode.Tab)
+    end,
+})
 CombatBox:AddSlider("NearestDetectRange", { Text = "ระยะ Detect NPC (studs)", Default = 100, Min = 10, Max = 500, Rounding = 0, Callback = function(v) flags.NearestDetectRange = v end })
 CombatBox:AddSlider("NearestDist",        { Text = "ระยะสูงเหนือหัว (studs)", Default = 6,   Min = 1,  Max = 20,  Rounding = 1, Callback = function(v) flags.NearestDist = v end })
 CombatBox:AddSlider("NearestAtkDelay",    { Text = "Attack Delay (x0.01s)",    Default = 5,   Min = 1,  Max = 50,  Rounding = 0, Callback = function(v) flags.NearestAtkDelay = v end })
@@ -418,7 +424,8 @@ task.spawn(function()
 end)
 
 --==================================================
---   ⚡ AUTO NEAREST - ติดบนหัวตลอด + Tab + M1 + Skill
+--   ⚡ AUTO NEAREST - ติดบนหัวตลอด + M1 + Skill
+--   (Tab จัดการใน Callback ของ Toggle แล้ว)
 --==================================================
 RunService.Heartbeat:Connect(function()
     if not flags.AutoNearest then return end
@@ -433,40 +440,15 @@ RunService.Heartbeat:Connect(function()
 end)
 
 task.spawn(function()
-    local tabOpened = false
-    local lastTarget = nil
-
     while task.wait() do
-        if not flags.AutoNearest then
-            if tabOpened then
-                pressKey(Enum.KeyCode.Tab)
-                tabOpened = false
-                lastTarget = nil
-            end
-            continue
-        end
-
+        if not flags.AutoNearest then continue end
         local tgt = getNearestNPC()
         local hum = tgt and tgt:FindFirstChildOfClass("Humanoid")
-        local alive = tgt and hum and hum.Health > 0
-
-        if alive then
-            if not tabOpened or lastTarget ~= tgt then
-                pressKey(Enum.KeyCode.Tab)
-                task.wait(0.1)
-                tabOpened = true
-                lastTarget = tgt
-            end
+        if tgt and hum and hum.Health > 0 then
             clickM1()
             spamAllSkills()
             task.wait((flags.NearestAtkDelay or 5) * 0.01)
         else
-            if tabOpened then
-                pressKey(Enum.KeyCode.Tab)
-                task.wait(0.1)
-                tabOpened = false
-                lastTarget = nil
-            end
             task.wait(0.2)
         end
     end
