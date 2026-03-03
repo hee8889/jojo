@@ -13,26 +13,6 @@ local GuiService       = game:GetService("GuiService")
 local Camera           = workspace.CurrentCamera
 local LocalPlayer      = Players.LocalPlayer
 
---==================================================
---              AUTO EXECUTE SETUP
--- เซฟ script ลง autoexec ให้รันอัตโนมัติทุกครั้ง
---==================================================
-local SCRIPT_URL = "https://raw.githubusercontent.com/hee8889/jojo/refs/heads/main/script.lua" -- เปลี่ยนเป็น URL script จริงของคุณ
-local AUTOEXEC_SCRIPT = [[
--- Baramee Hub Auto Execute
-loadstring(game:HttpGet("]] .. SCRIPT_URL .. [["))()
-]]
-
-pcall(function()
-    -- สร้าง autoexec folder ถ้ายังไม่มี
-    if not isfolder("autoexec") then
-        makefolder("autoexec")
-    end
-    -- เซฟ script
-    writefile("autoexec/BarameeHub.lua", AUTOEXEC_SCRIPT)
-    print("✓ Auto Execute ถูกเซฟแล้ว")
-end)
-
 local Window = Library:CreateWindow({
     Title            = "Baramee Hub",
     Center           = true,
@@ -54,11 +34,6 @@ local SkillBox  = Tabs.Combat:AddRightGroupbox("Auto Skill")
 
 local flags = {
     ESP                = false,
-    NOCLIP             = false,
-    FLY                = false,
-    FLYSpeed           = 40,
-    RUN                = false,
-    RUNSpeed           = 20,
     StickFollow        = false,
     StickDist          = 3,
     AutoAtk            = false,
@@ -144,175 +119,6 @@ task.spawn(function()
             end
         else stopESP() end
     end
-end)
-
---==================================================
---                    FLY SYSTEM
---==================================================
-local Flying = false
-local AlignOri, LinVel, FlyAttach
-local MoveVec = Vector3.zero
-local Ctrl = { F=0, B=0, L=0, R=0, U=0, D=0 }
-
-UserInputService.InputBegan:Connect(function(i, gp)
-    if gp then return end
-    if i.KeyCode == Enum.KeyCode.W           then Ctrl.F =  1 end
-    if i.KeyCode == Enum.KeyCode.S           then Ctrl.B = -1 end
-    if i.KeyCode == Enum.KeyCode.A           then Ctrl.L = -1 end
-    if i.KeyCode == Enum.KeyCode.D           then Ctrl.R =  1 end
-    if i.KeyCode == Enum.KeyCode.Space       then Ctrl.U =  1 end
-    if i.KeyCode == Enum.KeyCode.LeftControl then Ctrl.D = -1 end
-end)
-UserInputService.InputEnded:Connect(function(i)
-    if i.KeyCode == Enum.KeyCode.W           then Ctrl.F = 0 end
-    if i.KeyCode == Enum.KeyCode.S           then Ctrl.B = 0 end
-    if i.KeyCode == Enum.KeyCode.A           then Ctrl.L = 0 end
-    if i.KeyCode == Enum.KeyCode.D           then Ctrl.R = 0 end
-    if i.KeyCode == Enum.KeyCode.Space       then Ctrl.U = 0 end
-    if i.KeyCode == Enum.KeyCode.LeftControl then Ctrl.D = 0 end
-end)
-
-local function stopFly()
-    Flying = false
-    if AlignOri  then AlignOri:Destroy();  AlignOri  = nil end
-    if LinVel    then LinVel:Destroy();    LinVel    = nil end
-    if FlyAttach then FlyAttach:Destroy(); FlyAttach = nil end
-end
-
-local function startFly()
-    stopFly()
-    local char = LocalPlayer.Character; if not char then return end
-    local hrp  = char:WaitForChild("HumanoidRootPart")
-    FlyAttach = Instance.new("Attachment"); FlyAttach.Parent = hrp
-    AlignOri  = Instance.new("AlignOrientation")
-    AlignOri.Attachment0    = FlyAttach
-    AlignOri.Mode           = Enum.OrientationAlignmentMode.OneAttachment
-    AlignOri.Responsiveness = 15
-    AlignOri.MaxTorque      = 30000
-    AlignOri.Parent         = hrp
-    LinVel            = Instance.new("LinearVelocity")
-    LinVel.Attachment0 = FlyAttach
-    LinVel.RelativeTo  = Enum.ActuatorRelativeTo.World
-    LinVel.MaxForce    = 25000
-    LinVel.Parent      = hrp
-    Flying = true
-end
-
-RunService.RenderStepped:Connect(function()
-    if not Flying then return end
-    if not flags.FLY then stopFly(); return end
-    AlignOri.CFrame = Camera.CFrame
-    local dir = Camera.CFrame.LookVector  * (Ctrl.F + Ctrl.B)
-              + Camera.CFrame.RightVector * (Ctrl.R + Ctrl.L)
-              + Vector3.new(0, Ctrl.U + Ctrl.D, 0)
-    MoveVec = MoveVec:Lerp(dir * (flags.FLYSpeed or 40), 0.15)
-    LinVel.VectorVelocity = MoveVec
-end)
-
-task.spawn(function()
-    while task.wait(0.2) do
-        if flags.FLY and not Flying then startFly()
-        elseif not flags.FLY and Flying then stopFly() end
-    end
-end)
-
-LocalPlayer.CharacterAdded:Connect(function()
-    stopFly(); task.wait(0.5)
-    if flags.FLY then startFly() end
-end)
-
---==================================================
---                 NOCLIP SYSTEM
---==================================================
-local NoclipConn, Noclipping = nil, false
-local ColCache = {}
-
-local function cacheCol(c)
-    ColCache = {}
-    for _, p in ipairs(c:GetDescendants()) do
-        if p:IsA("BasePart") then ColCache[p] = p.CanCollide end
-    end
-end
-local function enableNC(c)
-    for _, p in ipairs(c:GetDescendants()) do
-        if p:IsA("BasePart") then p.CanCollide = false end
-    end
-end
-local function disableNC()
-    for p, v in pairs(ColCache) do
-        if p and p.Parent then p.CanCollide = v end
-    end
-    ColCache = {}
-end
-
-local function startNoclip()
-    if Noclipping then return end
-    local c = LocalPlayer.Character; if not c then return end
-    cacheCol(c); enableNC(c); Noclipping = true
-    NoclipConn = RunService.Stepped:Connect(function()
-        local ch = LocalPlayer.Character; if not ch then return end
-        local h  = ch:FindFirstChildOfClass("Humanoid")
-        if not h or h.Health <= 0 then return end
-        enableNC(ch)
-    end)
-end
-
-local function stopNoclip()
-    Noclipping = false
-    if NoclipConn then NoclipConn:Disconnect(); NoclipConn = nil end
-    disableNC()
-end
-
-task.spawn(function()
-    while task.wait() do
-        if flags.NOCLIP then if not Noclipping then startNoclip() end
-        else if Noclipping then stopNoclip() end end
-    end
-end)
-
-LocalPlayer.CharacterAdded:Connect(function(c)
-    local h = c:WaitForChild("Humanoid"); h.Died:Connect(stopNoclip)
-    task.wait(0.5); if flags.NOCLIP then startNoclip() end
-end)
-
---==================================================
---                  RUN SYSTEM
---==================================================
-local RunConn, Running = nil, false
-local DefSpeed, CurHum = 16, nil
-
-local function applySpeed()
-    if CurHum then CurHum.WalkSpeed = flags.RUNSpeed or DefSpeed end
-end
-
-local function startRun()
-    if Running then return end
-    local c = LocalPlayer.Character; if not c then return end
-    local h = c:FindFirstChildOfClass("Humanoid"); if not h then return end
-    CurHum = h; DefSpeed = h.WalkSpeed; Running = true; applySpeed()
-    RunConn = RunService.Stepped:Connect(function()
-        if not flags.RUN or h.Health <= 0 then return end
-        applySpeed()
-    end)
-end
-
-local function stopRun()
-    Running = false
-    if RunConn then RunConn:Disconnect(); RunConn = nil end
-    if CurHum then CurHum.WalkSpeed = DefSpeed end
-end
-
-task.spawn(function()
-    while task.wait() do
-        if flags.RUN then if not Running then startRun() end
-        else if Running then stopRun() end end
-    end
-end)
-
-LocalPlayer.CharacterAdded:Connect(function(c)
-    local h = c:WaitForChild("Humanoid"); CurHum = h; DefSpeed = h.WalkSpeed
-    h.Died:Connect(stopRun); task.wait(0.3)
-    if flags.RUN then startRun() end
 end)
 
 --==================================================
@@ -402,12 +208,7 @@ end
 --==================================================
 --                   GENERAL UI
 --==================================================
-GenBox:AddToggle("ESP",    { Text = "ESP",       Default = false, Callback = function(v) flags.ESP    = v end })
-GenBox:AddToggle("NOCLIP", { Text = "Noclip",    Default = false, Callback = function(v) flags.NOCLIP = v end })
-GenBox:AddToggle("FLY",    { Text = "Fly",       Default = false, Callback = function(v) flags.FLY    = v end })
-GenBox:AddSlider("FLYSpeed",  { Text = "Fly Speed", Default = 40,  Min = 10, Max = 1000, Rounding = 0, Callback = function(v) flags.FLYSpeed  = v end })
-GenBox:AddToggle("RUN",    { Text = "Speed Run", Default = false, Callback = function(v) flags.RUN    = v end })
-GenBox:AddSlider("RUNSpeed",  { Text = "Run Speed", Default = 20,  Min = 10, Max = 1000, Rounding = 0, Callback = function(v) flags.RUNSpeed  = v end })
+GenBox:AddToggle("ESP", { Text = "ESP", Default = false, Callback = function(v) flags.ESP = v end })
 
 --==================================================
 --                   AUTO PLAY UI
@@ -423,34 +224,6 @@ AutoBox:AddToggle("AutoPlay", {
 AutoBox:AddSlider("AutoPlayDelay", {
     Text = "Delay ก่อนกด (วินาที)", Default = 1, Min = 0, Max = 5, Rounding = 1,
     Callback = function(v) flags.AutoPlayDelay = v end,
-})
-AutoBox:AddDivider()
-
--- ปุ่มจัดการ Auto Execute
-AutoBox:AddButton({
-    Text = "💾 บันทึก Auto Execute",
-    Tooltip = "เซฟ script ลง autoexec ให้รันอัตโนมัติทุกครั้งที่เปิด executor",
-    Func = function()
-        pcall(function()
-            if not isfolder("autoexec") then makefolder("autoexec") end
-            local scriptContent = 'loadstring(game:HttpGet("https://raw.githubusercontent.com/hee8889/jojo/refs/heads/main/script.lua"))()'
-            writefile("autoexec/BarameeHub.lua", scriptContent)
-            Library:Notify("✓ บันทึก Auto Execute แล้ว\nจะรัน script อัตโนมัติทุกครั้ง", 4)
-        end)
-    end,
-})
-AutoBox:AddButton({
-    Text = "🗑️ ลบ Auto Execute",
-    Func = function()
-        pcall(function()
-            if isfile("autoexec/BarameeHub.lua") then
-                delfile("autoexec/BarameeHub.lua")
-                Library:Notify("✓ ลบ Auto Execute แล้ว", 3)
-            else
-                Library:Notify("ไม่พบไฟล์ Auto Execute", 3)
-            end
-        end)
-    end,
 })
 
 -- Auto Play Loop
@@ -660,12 +433,11 @@ RunService.Heartbeat:Connect(function()
 end)
 
 task.spawn(function()
-    local tabOpened = false      -- เช็คว่ากด Tab เปิดไปแล้วหรือยัง
-    local lastTarget = nil       -- จำเป้าหมายล่าสุด
+    local tabOpened = false
+    local lastTarget = nil
 
     while task.wait() do
         if not flags.AutoNearest then
-            -- ถ้าปิด AutoNearest และ Tab เปิดอยู่ ให้กด Tab ปิด
             if tabOpened then
                 pressKey(Enum.KeyCode.Tab)
                 tabOpened = false
@@ -679,19 +451,16 @@ task.spawn(function()
         local alive = tgt and hum and hum.Health > 0
 
         if alive then
-            -- เป้าใหม่หรือยังไม่เคยกด Tab → กด Tab เปิด
             if not tabOpened or lastTarget ~= tgt then
                 pressKey(Enum.KeyCode.Tab)
                 task.wait(0.1)
                 tabOpened = true
                 lastTarget = tgt
             end
-            -- M1 + Skill
             clickM1()
             spamAllSkills()
             task.wait((flags.NearestAtkDelay or 5) * 0.01)
         else
-            -- เป้าตายแล้ว → กด Tab ปิด
             if tabOpened then
                 pressKey(Enum.KeyCode.Tab)
                 task.wait(0.1)
@@ -723,10 +492,8 @@ SaveManager:SetFolder("BarameeHub/game")
 SaveManager:BuildConfigSection(Tabs.Settings)
 ThemeManager:ApplyToTab(Tabs.Settings)
 
--- ✅ โหลด config ที่ mark autoload ไว้ → เปิด toggle ที่เคย save ไว้อัตโนมัติ
 SaveManager:LoadAutoloadConfig()
 
--- ✅ หลังโหลด config แล้ว sync flags ให้ตรงกับ Toggles
 task.wait(1)
 flags.AutoPlay    = Toggles.AutoPlay    and Toggles.AutoPlay.Value    or false
 flags.AutoNearest = Toggles.AutoNearest and Toggles.AutoNearest.Value or false
