@@ -1,0 +1,1238 @@
+-- =====================================================
+-- UI LIBRARY
+-- =====================================================
+local library = loadstring(game:GetObjects("rbxassetid://7657867786")[1].Source)()
+local Wait = library.subs.Wait
+local PepsisWorld = library:CreateWindow({
+    Name = "Baramee Hub",
+    Themeable = {
+        Info = "Discord Server -"
+    }
+})
+local GeneralTab = PepsisWorld:CreateTab({
+    Name = "General"
+})
+local FarmingSection = GeneralTab:CreateSection({
+    Name = "Farming"
+})
+
+-- =====================================================
+-- AUTO FARM SETUP
+-- =====================================================
+local ReplicatedStorage = game:GetService("ReplicatedStorage")
+local Players = game:GetService("Players")
+local Workspace = game:GetService("Workspace")
+local VirtualUser = game:GetService("VirtualUser")
+local VirtualInputManager = game:GetService("VirtualInputManager")
+local RunService = game:GetService("RunService")
+
+local player = Players.LocalPlayer
+local character, hrp
+
+-- ตัวแปรควบคุม
+local CleanUpEnabled = false
+local InvadeEnabled = false
+local AntiAFKEnabled = false
+local LootboxEnabled = false
+local AutoSellEnabled = false
+local SafeSpotEnabled = false
+local farmingLoop = nil
+local invadeLoop = nil
+local antiAFKLoop = nil
+local lootboxLoop = nil
+local autoSellLoop = nil
+local safeSpotConnection = nil
+
+-- ตัวแปรสำหรับเก็บ Mission ที่เลือก
+local SelectedItemsToSell = {}
+local ItemSellToggles = {}
+local SelectedCleanUpMissions = {}
+local CleanUpMissionToggles = {}
+local SelectedInvadeMissions = {}
+local InvadeMissionToggles = {}
+
+-- =====================================================
+-- ANIMATION CONSTANTS
+-- =====================================================
+local PHASE_1_ANIM = "rbxassetid://122661755668810"
+local PHASE_2_ANIM = "rbxassetid://134153528573205"
+
+-- =====================================================
+-- HELPER FUNCTIONS
+-- =====================================================
+local function randomWait(min, max)
+    task.wait(math.random(min * 100, max * 100) / 100)
+end
+
+local function bindCharacter(char)
+    character = char
+    hrp = char:WaitForChild("HumanoidRootPart")
+end
+
+if player then
+    bindCharacter(player.Character or player.CharacterAdded:Wait())
+    player.CharacterAdded:Connect(function(char)
+        task.wait(0.5)
+        bindCharacter(char)
+    end)
+end
+
+local BASE_POSITION = Vector3.new(259.0781555175781, 657.9349365234375, 579.0914306640625)
+local SAFE_SPOT = Vector3.new(259.0781555175781, 657.9349365234375, 579.0914306640625)
+local SAFE_SPOT_RADIUS = 50
+
+local function teleportTo(pos, waitTime)
+    if not hrp then return end
+    pcall(function()
+        hrp.AssemblyLinearVelocity = Vector3.zero
+        hrp.AssemblyAngularVelocity = Vector3.zero
+        hrp.CFrame = CFrame.new(pos)
+    end)
+    randomWait(waitTime or 0.4, (waitTime or 0.4) + 0.2)
+end
+
+-- Paths
+local missionData = ReplicatedStorage:WaitForChild("OverworldMissionData")
+local inactiveFolder = missionData:WaitForChild("Inactive")
+local activeFolder = missionData:WaitForChild("Active")
+local myMissionFolder = ReplicatedStorage
+    :WaitForChild("Missions")
+    :WaitForChild("Players")
+    :WaitForChild(player.Name)
+
+-- Packet RemoteEvent
+local PacketRemote = ReplicatedStorage
+    :WaitForChild("Files")
+    :WaitForChild("Modules")
+    :WaitForChild("Shared")
+    :WaitForChild("Packet")
+    :WaitForChild("RemoteEvent")
+
+-- =====================================================
+-- PACKET FUNCTIONS
+-- Note: This uses `buffer.fromstring(...)` which some exploit
+-- environments provide. Keep that dependency in mind.
+-- =====================================================
+local function safeFireBuffer(raw)
+    if typeof(buffer) == "table" and buffer.fromstring then
+        pcall(function() PacketRemote:FireServer(buffer.fromstring(raw)) end)
+    else
+        -- fallback: try to send raw string if environment supports it
+        pcall(function() PacketRemote:FireServer(raw) end)
+    end
+end
+
+local function engageCleanupMission(missionId)
+    local prefix = "\004@\017OverworldMissions\028\005\001\028\v\014Identification\v$"
+    local suffix = "\v\nConditions\028\005\001\v\bFlawless\005\002\v\nBlind Path\000\v\tDirective\v\fCleanup Duty\v\aRequest\v\006Engage\000\v\001n\005\001\000"
+    safeFireBuffer(prefix .. missionId .. suffix)
+end
+
+local function interceptMission(missionId)
+    local prefix = "\004\a\017OverworldMissions\028\005\001\028\v\014Identification\v$"
+    local suffix = "\v\aRequest\v\tIntercept\000\v\001n\005\001\000"
+    safeFireBuffer(prefix .. missionId .. suffix)
+end
+
+-- =====================================================
+-- LOOTBOX PACKET FUNCTIONS
+-- =====================================================
+local function openLootbox(lootboxId)
+    local prefix = "\004\002\018RequestLootboxOpen\028\005\001\028\005\001\v$"
+    local suffix = "\005\002\v\aDefault\000\v\001n\005\001\000"
+    safeFireBuffer(prefix .. lootboxId .. suffix)
+end
+
+local function takeItem(itemName)
+    local prefix = "\003\005Event\028\v\004Name\v\014LootboxSession\v\004Args\028\005\001\v\004Take\005\002\v"
+    local suffix = "\000\000"
+    local nameWithLen = string.char(#itemName) .. itemName
+    safeFireBuffer(prefix .. nameWithLen .. suffix)
+end
+
+-- =====================================================
+-- PAWNSHOP PACKET FUNCTIONS
+-- =====================================================
+local function pawnshopSelect(itemId, itemName)
+    local prefix = "\004\004\016Pawnshopinteract\028\005\001\028\v\002ID\v$"
+    local middle = "\v\004Name\v"
+    local suffix = "\000\v\001n\005\001\000"
+    local nameWithLen = string.char(#itemName) .. itemName
+    safeFireBuffer(prefix .. itemId .. middle .. nameWithLen .. suffix)
+end
+
+local function pawnshopSell()
+    safeFireBuffer("\004\b\016Pawnshopinteract\028\005\001\028\v\004Sell\014\001\000\v\001n\005\001\000")
+end
+
+-- Constants
+local TARGET_QUEST_TEXT = "Clean up a slain devil's remains and deliver its flesh before rival squads steal it."
+local TURNIN_QUEST_TEXT = "You've extracted the devil flesh. Now deliver it to the designated drop-off point."
+local INVADE_QUEST_TEXT = "Prevent the enemy squad from reaching their drop-off point with the devil flesh. Eliminate them or stall long enough to deny the delivery."
+
+local turnInRoot = Workspace.World.Missions["Cleanup Duty"]
+local AREAS = {"Commercial District", "Outskirts", "Residential Area"}
+local FALLBACK_POSITIONS = {
+    Vector3.new(-502.2599, 4.3058, -918.6776),
+    Vector3.new(112.8015, 2.8710, -744.8790),
+    Vector3.new(-2821.0452, 4.0093, -683.3412)
+}
+
+local TOMATO_FALLBACK_POSITIONS = {
+    Vector3.new(-1654.0526, 0.8418, -625.3628),
+    Vector3.new(-1021.7109, 0.8685, -682.8042),
+    Vector3.new(463.0645, 0.8058, -1474.0311)
+}
+
+-- =====================================================
+-- ANIMATION DETECTION FUNCTIONS
+-- =====================================================
+local function isAnimationPlaying(animId)
+    if not character then return false end
+    local humanoid = character:FindFirstChild("Humanoid")
+    if not humanoid then return false end
+
+    local loadedAnimations = humanoid:GetPlayingAnimationTracks()
+    for _, track in ipairs(loadedAnimations) do
+        local ok, anim = pcall(function() return track.Animation end)
+        if ok and anim and anim.AnimationId == animId then
+            return true
+        end
+    end
+    return false
+end
+
+-- =====================================================
+-- SAFE SPOT SYSTEM
+-- =====================================================
+local lastSafeCheck = 0
+
+local function startSafeSpot()
+    print("[SAFE SPOT] Started - radius:", SAFE_SPOT_RADIUS, "studs")
+
+    if safeSpotConnection then
+        safeSpotConnection:Disconnect()
+        safeSpotConnection = nil
+    end
+
+    safeSpotConnection = RunService.Heartbeat:Connect(function()
+        if not SafeSpotEnabled then return end
+        if not hrp then return end
+
+        local now = tick()
+        if now - lastSafeCheck < 0.5 then return end
+        lastSafeCheck = now
+
+        local dist = (hrp.Position - SAFE_SPOT).Magnitude
+        if dist > SAFE_SPOT_RADIUS then
+            pcall(function()
+                hrp.AssemblyLinearVelocity = Vector3.zero
+                hrp.AssemblyAngularVelocity = Vector3.zero
+                hrp.CFrame = CFrame.new(SAFE_SPOT)
+            end)
+            print("[SAFE SPOT] ⚡ Teleported back! (was", math.floor(dist), "studs away)")
+        end
+    end)
+end
+
+local function stopSafeSpot()
+    if safeSpotConnection then
+        safeSpotConnection:Disconnect()
+        safeSpotConnection = nil
+    end
+    print("[SAFE SPOT] Stopped")
+end
+
+-- =====================================================
+-- LOOTBOX HELPER FUNCTIONS
+-- =====================================================
+local function getLootboxIds()
+    local lootboxIds = {}
+    local success, scrollingFrame = pcall(function()
+        return player.PlayerGui and player.PlayerGui:FindFirstChild("HUD")
+            and player.PlayerGui.HUD:FindFirstChild("Phone")
+            and player.PlayerGui.HUD.Phone:FindFirstChild("Lootboxes")
+            and player.PlayerGui.HUD.Phone.Lootboxes:FindFirstChild("ScrollingFrame")
+    end)
+    if not success or not scrollingFrame then
+        warn("[LOOTBOX] Cannot find ScrollingFrame")
+        return lootboxIds
+    end
+    for _, child in ipairs(scrollingFrame:GetChildren()) do
+        if child:IsA("Frame") and string.find(child.Name, "-") then
+            table.insert(lootboxIds, child.Name)
+        end
+    end
+    return lootboxIds
+end
+
+-- =====================================================
+-- AUTO SELL HELPER FUNCTIONS
+-- =====================================================
+local function getBackpackItems()
+    local items = {}
+    local itemsByName = {}
+    local backpack = player and player:FindFirstChild("Backpack")
+    if not backpack then
+        warn("[AUTO SELL] Backpack not found")
+        return items, itemsByName
+    end
+    for _, item in ipairs(backpack:GetChildren()) do
+        if item:IsA("StringValue") then
+            local itemName = item.Name
+            local idValue = item:FindFirstChild("ID")
+            if idValue and idValue:IsA("StringValue") then
+                local itemId = idValue.Value
+                table.insert(items, { name = itemName, id = itemId })
+                itemsByName[itemName] = (itemsByName[itemName] or 0) + 1
+            end
+        end
+    end
+    return items, itemsByName
+end
+
+local function getUniqueItemNames()
+    local uniqueNames = {}
+    local _, itemsByName = getBackpackItems()
+    for itemName, count in pairs(itemsByName) do
+        table.insert(uniqueNames, { name = itemName, count = count })
+    end
+    table.sort(uniqueNames, function(a, b) return a.name < b.name end)
+    return uniqueNames
+end
+
+-- =====================================================
+-- QUEST FUNCTIONS
+-- =====================================================
+local function getCurrentQuest()
+    for _, v in ipairs(myMissionFolder:GetChildren()) do
+        if v:IsA("StringValue") then
+            return v
+        end
+    end
+    return nil
+end
+
+local function waitForTomatoDevil()
+    local effects = Workspace.World and Workspace.World:FindFirstChild("Effects")
+    if not effects then return nil end
+    local waitTime = 0
+    repeat
+        if not CleanUpEnabled then return nil end
+        local d = effects:FindFirstChild("TomatoDevil")
+        if d then return d end
+        task.wait(0.3)
+        waitTime = waitTime + 0.3
+        if waitTime > 10 then
+            warn("[TOMATO] Timeout waiting for devil")
+            return nil
+        end
+    until false
+end
+
+local function attemptTomatoOnce(quest, devil)
+    if not devil or not devil.Parent then
+        warn("[TOMATO] Devil not found or destroyed")
+        return false
+    end
+    local root = devil:FindFirstChild("RootPart")
+    if not root then
+        warn("[TOMATO] No RootPart found")
+        return false
+    end
+    local prompt = root:FindFirstChild("Prompt")
+    if not prompt then
+        warn("[TOMATO] No Prompt found")
+        return false
+    end
+
+    teleportTo(root.Position + Vector3.new(0, 0, -4), 0.5)
+    if not quest.Parent then
+        warn("[TOMATO] Quest disappeared")
+        return false
+    end
+
+    prompt.RequiresLineOfSight = false
+    prompt.MaxActivationDistance = 15
+    pcall(function() fireproximityprompt(prompt) end)
+    task.wait(0.4)
+
+    if isAnimationPlaying(PHASE_1_ANIM) then
+        print("[PHASE 1] ✅ Animation เล่นแล้ว! เจอแล้ว!")
+        teleportTo(BASE_POSITION, 1)
+
+        print("[PHASE 1] ⏳ รอ quest value เปลี่ยน...")
+        for i = 1, 30 do
+            if not CleanUpEnabled then return false end
+            task.wait(0.3)
+            if not quest.Parent then return false end
+            if quest.Value == TURNIN_QUEST_TEXT then
+                print("[PHASE 1] ✅ Quest value เปลี่ยน! ไปเฟส 2")
+                return true
+            end
+        end
+        warn("[PHASE 1] ⚠️ Quest value ไม่เปลี่ยน timeout")
+        return false
+    else
+        print("[TOMATO] ❌ Animation ไม่เล่น - ไม่ใช่ของเรา")
+        teleportTo(BASE_POSITION, 1)
+        return false
+    end
+end
+
+local function handleTomatoQuest(quest)
+    local devil = waitForTomatoDevil()
+    if devil and CleanUpEnabled then
+        if attemptTomatoOnce(quest, devil) then return end
+    end
+
+    print("[TOMATO] Using fallback positions...")
+    for _, pos in ipairs(TOMATO_FALLBACK_POSITIONS) do
+        if not CleanUpEnabled then break end
+        print("[TOMATO] Trying fallback position:", pos)
+        teleportTo(pos, 1.2)
+        task.wait(0.5)
+        local nearbyDevil = Workspace.World and Workspace.World:FindFirstChild("Effects") and Workspace.World.Effects:FindFirstChild("TomatoDevil")
+        if nearbyDevil then
+            print("[TOMATO] Found devil at fallback position")
+            local root = nearbyDevil:FindFirstChild("RootPart")
+            if root then
+                local prompt = root:FindFirstChild("Prompt")
+                if prompt then
+                    teleportTo(root.Position + Vector3.new(0, 0, -4), 0.5)
+                    if quest.Parent then
+                        prompt.RequiresLineOfSight = false
+                        prompt.MaxActivationDistance = 15
+                        pcall(function() fireproximityprompt(prompt) end)
+                        task.wait(0.4)
+
+                        if isAnimationPlaying(PHASE_1_ANIM) then
+                            print("[PHASE 1] ✅ Animation เล่นแล้ว! เจอแล้ว!")
+                            teleportTo(BASE_POSITION, 1)
+                            print("[PHASE 1] ⏳ รอ quest value เปลี่ยน...")
+                            for i = 1, 30 do
+                                if not CleanUpEnabled then break end
+                                task.wait(0.3)
+                                if not quest.Parent then break end
+                                if quest.Value == TURNIN_QUEST_TEXT then
+                                    print("[PHASE 1] ✅ Quest value เปลี่ยน! Success at fallback position!")
+                                    return
+                                end
+                            end
+                        else
+                            print("[TOMATO] ❌ Animation ไม่เล่น - ไม่ใช่ของเรา")
+                        end
+                    end
+                end
+            end
+        else
+            print("[TOMATO] No devil at this position")
+        end
+    end
+
+    warn("[TOMATO] All attempts failed, waiting for next devil...")
+    teleportTo(BASE_POSITION, 1)
+    task.wait(2)
+end
+
+local function attemptTurnInOnce(quest)
+    for _, areaName in ipairs(AREAS) do
+        if not CleanUpEnabled then return false end
+        local area = turnInRoot and turnInRoot:FindFirstChild(areaName)
+        if area then
+            local t = area:FindFirstChild("TurnIn")
+            if t then
+                local prompt = t:FindFirstChild("Prompt")
+                local part = t:IsA("BasePart") and t or t:FindFirstChildWhichIsA("BasePart")
+                if prompt and part then
+                    teleportTo(part.Position + Vector3.new(0, 0, -4), 0.4)
+                    prompt.RequiresLineOfSight = false
+                    prompt.MaxActivationDistance = 15
+                    pcall(function() fireproximityprompt(prompt) end)
+                    task.wait(0.4)
+
+                    if isAnimationPlaying(PHASE_2_ANIM) then
+                        print("[PHASE 2] ✅ Animation เล่นแล้ว! เจอแล้ว!")
+                        teleportTo(BASE_POSITION, 0.8)
+
+                        print("[PHASE 2] ⏳ รอ animation phase 2 จบ...")
+                        for i = 1, 60 do
+                            if not CleanUpEnabled then return false end
+                            task.wait(0.1)
+                            if not isAnimationPlaying(PHASE_2_ANIM) then
+                                print("[PHASE 2] ✅ Animation จบ! Mission สำเร็จ!")
+                                return true
+                            end
+                        end
+                        print("[PHASE 2] ⚠️ Animation timeout")
+                        return true
+                    else
+                        print("[TURN IN] ❌ Animation ไม่เล่น - ไม่ใช่ของเรา ลองพื้นที่ถัดไป:", areaName)
+                    end
+                end
+            end
+        end
+    end
+    return false
+end
+
+-- =====================================================
+-- MISSION SELECTOR FUNCTIONS
+-- =====================================================
+local function getMissionDisplayName(folder)
+    local directive = folder:FindFirstChild("Directive")
+    local directiveName = directive and directive.Value or "Unknown"
+    local shortId = folder.Name:sub(1, 8)
+    return directiveName .. " [" .. shortId .. "]"
+end
+
+-- =====================================================
+-- CLEANUP MISSION SELECTOR
+-- =====================================================
+local CleanUpSection = GeneralTab:CreateSection({
+    Name = "CleanUp Mission Selector"
+})
+
+local function scanCleanUpMissions()
+    for _, toggle in pairs(CleanUpMissionToggles) do
+        if toggle and toggle.Remove then
+            pcall(function() toggle:Remove() end)
+        end
+    end
+    CleanUpMissionToggles = {}
+    SelectedCleanUpMissions = {}
+
+    print("[CLEANUP SCAN] Scanning Inactive folder...")
+    local allMissions = {}
+    for _, folder in ipairs(inactiveFolder:GetChildren()) do
+        if folder:IsA("Folder") then
+            local directive = folder:FindFirstChild("Directive")
+            local directiveValue = directive and directive.Value or "NO_DIRECTIVE"
+            table.insert(allMissions, { folder = folder, id = folder.Name, directive = directiveValue })
+        end
+    end
+    if #allMissions == 0 then
+        print("[CLEANUP SCAN] ⚠️ No missions found in Inactive folder!")
+        return
+    end
+    for _, missionData in ipairs(allMissions) do
+        local folder = missionData.folder
+        local missionId = missionData.id
+        local directiveValue = missionData.directive
+        local displayName = getMissionDisplayName(folder)
+        local fullName = displayName .. " (" .. directiveValue .. ")"
+        local toggle = CleanUpSection:AddToggle({
+            Name = fullName,
+            Flag = "CleanUpMission_" .. missionId,
+            Callback = function(value)
+                SelectedCleanUpMissions[missionId] = value
+                if value then
+                    print("[CLEANUP SELECT] Selected:", displayName)
+                else
+                    print("[CLEANUP SELECT] Deselected:", displayName)
+                end
+            end
+        })
+        CleanUpMissionToggles[missionId] = toggle
+    end
+    print("[CLEANUP SCAN] Created", #allMissions, "toggles")
+end
+
+CleanUpSection:AddButton({
+    Name = "🔍 Scan CleanUp IDs",
+    Callback = function() scanCleanUpMissions() end
+})
+
+CleanUpSection:AddButton({
+    Name = "✅ Select All CleanUp",
+    Callback = function()
+        for missionId, toggle in pairs(CleanUpMissionToggles) do
+            SelectedCleanUpMissions[missionId] = true
+            if toggle and toggle.SetValue then toggle:SetValue(true) end
+        end
+        print("[CLEANUP SELECT] Selected all")
+    end
+})
+
+CleanUpSection:AddButton({
+    Name = "❌ Deselect All CleanUp",
+    Callback = function()
+        for missionId, toggle in pairs(CleanUpMissionToggles) do
+            SelectedCleanUpMissions[missionId] = false
+            if toggle and toggle.SetValue then toggle:SetValue(false) end
+        end
+        print("[CLEANUP SELECT] Deselected all")
+    end
+})
+
+-- =====================================================
+-- INVADE MISSION SELECTOR
+-- =====================================================
+local InvadeSection = GeneralTab:CreateSection({
+    Name = "Invade Mission Selector"
+})
+
+local function scanInvadeMissions()
+    for _, toggle in pairs(InvadeMissionToggles) do
+        if toggle and toggle.Remove then
+            pcall(function() toggle:Remove() end)
+        end
+    end
+    InvadeMissionToggles = {}
+    SelectedInvadeMissions = {}
+
+    print("[INVADE SCAN] Scanning folders...")
+    local allMissions = {}
+    for _, folder in ipairs(inactiveFolder:GetChildren()) do
+        if folder:IsA("Folder") then
+            table.insert(allMissions, { folder = folder, isActive = false, id = folder.Name })
+        end
+    end
+    for _, folder in ipairs(activeFolder:GetChildren()) do
+        if folder:IsA("Folder") then
+            table.insert(allMissions, { folder = folder, isActive = true, id = folder.Name })
+        end
+    end
+    for _, missionData in ipairs(allMissions) do
+        local folder = missionData.folder
+        local isActive = missionData.isActive
+        local missionId = missionData.id
+        local displayName = getMissionDisplayName(folder)
+        local statusTag = isActive and " [ACTIVE]" or " [INACTIVE]"
+        local fullName = displayName .. statusTag
+        local toggle = InvadeSection:AddToggle({
+            Name = fullName,
+            Flag = "InvadeMission_" .. missionId,
+            Callback = function(value)
+                SelectedInvadeMissions[missionId] = value
+            end
+        })
+        InvadeMissionToggles[missionId] = toggle
+    end
+end
+
+InvadeSection:AddButton({
+    Name = "🔍 Scan Inactive + Active IDs",
+    Callback = function() scanInvadeMissions() end
+})
+
+InvadeSection:AddButton({
+    Name = "✅ Select All Invade",
+    Callback = function()
+        for missionId, toggle in pairs(InvadeMissionToggles) do
+            SelectedInvadeMissions[missionId] = true
+            if toggle and toggle.SetValue then toggle:SetValue(true) end
+        end
+    end
+})
+
+InvadeSection:AddButton({
+    Name = "❌ Deselect All Invade",
+    Callback = function()
+        for missionId, toggle in pairs(InvadeMissionToggles) do
+            SelectedInvadeMissions[missionId] = false
+            if toggle and toggle.SetValue then toggle:SetValue(false) end
+        end
+    end
+})
+
+-- =====================================================
+-- AUTO SELL UI SECTION
+-- =====================================================
+local SellSection = GeneralTab:CreateSection({
+    Name = "Auto Sell Items"
+})
+
+local function scanBackpackItems()
+    for _, toggle in pairs(ItemSellToggles) do
+        if toggle and toggle.Remove then
+            pcall(function() toggle:Remove() end)
+        end
+    end
+    ItemSellToggles = {}
+    SelectedItemsToSell = {}
+
+    print("[AUTO SELL] 🔍 Scanning backpack...")
+    local uniqueItems = getUniqueItemNames()
+    if #uniqueItems == 0 then
+        print("[AUTO SELL] ⚠️ No items found in backpack!")
+        return
+    end
+    print("[AUTO SELL] Found", #uniqueItems, "unique item types")
+    for _, itemData in ipairs(uniqueItems) do
+        local itemName = itemData.name
+        local count = itemData.count
+        local displayName = itemName .. " (x" .. count .. ")"
+        local safeFlag = itemName:gsub("%s", "_")
+        local toggle = SellSection:AddToggle({
+            Name = displayName,
+            Flag = "SellItem_" .. safeFlag,
+            Callback = function(value)
+                SelectedItemsToSell[itemName] = value
+                if value then
+                    print("[AUTO SELL] ✅ Selected:", itemName)
+                else
+                    print("[AUTO SELL] ❌ Deselected:", itemName)
+                end
+            end
+        })
+        ItemSellToggles[itemName] = toggle
+    end
+    print("[AUTO SELL] Created", #uniqueItems, "toggles")
+end
+
+SellSection:AddButton({
+    Name = "🔍 Scan Backpack Items",
+    Callback = function() scanBackpackItems() end
+})
+
+SellSection:AddButton({
+    Name = "✅ Select All Items",
+    Callback = function()
+        for itemName, toggle in pairs(ItemSellToggles) do
+            SelectedItemsToSell[itemName] = true
+            if toggle and toggle.SetValue then toggle:SetValue(true) end
+        end
+        print("[AUTO SELL] Selected all items")
+    end
+})
+
+SellSection:AddButton({
+    Name = "❌ Deselect All Items",
+    Callback = function()
+        for itemName, toggle in pairs(ItemSellToggles) do
+            SelectedItemsToSell[itemName] = false
+            if toggle and toggle.SetValue then toggle:SetValue(false) end
+        end
+        print("[AUTO SELL] Deselected all items")
+    end
+})
+
+SellSection:AddButton({
+    Name = "📦 Show Backpack Contents",
+    Callback = function()
+        local items, itemsByName = getBackpackItems()
+        if #items == 0 then
+            print("[AUTO SELL] Backpack is empty")
+        else
+            print("═══════════════════════════════")
+            print("[AUTO SELL] 📦 BACKPACK CONTENTS")
+            print("═══════════════════════════════")
+            local sortedItems = {}
+            for name, count in pairs(itemsByName) do
+                table.insert(sortedItems, { name = name, count = count })
+            end
+            table.sort(sortedItems, function(a, b) return a.name < b.name end)
+            for i, data in ipairs(sortedItems) do
+                print(string.format("[%d] %s (x%d)", i, data.name, data.count))
+            end
+            print("═══════════════════════════════")
+            print("Total unique items:", #sortedItems)
+            print("Total items:", #items)
+            print("═══════════════════════════════")
+        end
+    end
+})
+
+-- =====================================================
+-- AUTO SELL MAIN LOOP
+-- =====================================================
+local function startAutoSell()
+    print("[AUTO SELL] 🚀 Started (GROUP PARALLEL MODE)")
+
+    while AutoSellEnabled and Wait() do
+        local success, err = pcall(function()
+            task.wait(0.1)
+
+            local hasSelection = false
+            for _, isSelected in pairs(SelectedItemsToSell) do
+                if isSelected then hasSelection = true break end
+            end
+
+            if not hasSelection then
+                print("[AUTO SELL] ⚠️ No items selected!")
+                task.wait(2)
+                return
+            end
+
+            local items, _ = getBackpackItems()
+            if #items == 0 then
+                task.wait(1)
+                return
+            end
+
+            local grouped = {}
+            for _, itemData in ipairs(items) do
+                local name = itemData.name
+                if SelectedItemsToSell[name] then
+                    if not grouped[name] then grouped[name] = {} end
+                    table.insert(grouped[name], itemData.id)
+                end
+            end
+
+            local groupCount = 0
+            for _ in pairs(grouped) do groupCount = groupCount + 1 end
+            print("[AUTO SELL] 📦 Selling", groupCount, "item types in parallel!")
+
+            local totalSold = 0
+
+            for itemName, ids in pairs(grouped) do
+                if not AutoSellEnabled then break end
+                task.spawn(function()
+                    local sold = 0
+                    for _, itemId in ipairs(ids) do
+                        if not AutoSellEnabled then break end
+                        pcall(function()
+                            pawnshopSelect(itemId, itemName)
+                            task.wait(0.3)
+                            pawnshopSell()
+                        end)
+                        sold = sold + 1
+                        task.wait(0.05)
+                    end
+                    print("[AUTO SELL] ✅", itemName, "sold", sold .. "/" .. #ids)
+                    totalSold = totalSold + sold
+                end)
+            end
+
+            task.wait(2)
+            print("[AUTO SELL] ⚡ Total sold:", totalSold, "items!")
+            task.wait(0.5)
+        end)
+
+        if not success then
+            warn("[AUTO SELL] ❌ Error:", err)
+            task.wait(1)
+        end
+    end
+
+    print("[AUTO SELL] 🛑 Stopped")
+end
+
+-- =====================================================
+-- MAIN FARMING LOOP (ANIMATION-BASED)
+-- =====================================================
+local function startFarming()
+    print("[AUTO FARM] CleanUp Started (ANIMATION-BASED)")
+
+    while CleanUpEnabled and Wait() do
+        local success, err = pcall(function()
+            randomWait(0.3, 0.5)
+            local quest = getCurrentQuest()
+
+            if not quest then
+                teleportTo(BASE_POSITION, 1)
+                local selectedCount = 0
+                for _, isSelected in pairs(SelectedCleanUpMissions) do
+                    if isSelected then selectedCount = selectedCount + 1 end
+                end
+
+                if selectedCount == 0 then
+                    print("[CLEANUP] No missions selected, trying all...")
+                    for _, folder in ipairs(inactiveFolder:GetChildren()) do
+                        if not CleanUpEnabled then break end
+                        if folder:IsA("Folder") then
+                            engageCleanupMission(folder.Name)
+                            task.wait(0.5)
+                            if getCurrentQuest() then break end
+                        end
+                    end
+                else
+                    local targetMissions = {}
+                    for _, folder in ipairs(inactiveFolder:GetChildren()) do
+                        if SelectedCleanUpMissions[folder.Name] then
+                            table.insert(targetMissions, folder)
+                        end
+                    end
+                    for i = #targetMissions, 1, -1 do
+                        local j = math.random(i)
+                        targetMissions[i], targetMissions[j] = targetMissions[j], targetMissions[i]
+                    end
+                    for _, folder in ipairs(targetMissions) do
+                        if not CleanUpEnabled then break end
+                        engageCleanupMission(folder.Name)
+                        task.wait(0.5)
+                        if getCurrentQuest() then break end
+                    end
+                end
+                return
+            end
+
+            if quest.Value == TARGET_QUEST_TEXT then
+                print("[CLEANUP] 🎬 เฟส 1: หา Tomato Devil...")
+                handleTomatoQuest(quest)
+                return
+            end
+
+            if quest.Value == TURNIN_QUEST_TEXT then
+                print("[CLEANUP] 🎬 เฟส 2: ไป Turn-in Point...")
+                local ok = attemptTurnInOnce(quest)
+                if not ok and getCurrentQuest() and CleanUpEnabled then
+                    print("[CLEANUP] ⏳ ลองตำแหน่ง fallback...")
+                    for _, pos in ipairs(FALLBACK_POSITIONS) do
+                        if not CleanUpEnabled then break end
+                        teleportTo(pos, 1.2)
+                        if attemptTurnInOnce(quest) then break end
+                    end
+                end
+            end
+        end)
+
+        if not success then
+            warn("[AUTO FARM] Error:", err)
+            task.wait(2)
+        end
+    end
+
+    print("[AUTO FARM] CleanUp Stopped")
+end
+
+-- =====================================================
+-- AUTO INVADE LOOP
+-- =====================================================
+local function startInvade()
+    print("[AUTO INVADE] Started")
+
+    while InvadeEnabled and Wait() do
+        local success, err = pcall(function()
+            randomWait(0.5, 1)
+            local quest = getCurrentQuest()
+
+            if quest and quest.Value == INVADE_QUEST_TEXT then
+                print("[AUTO INVADE] Already have quest, waiting...")
+                local waitCount = 0
+                while InvadeEnabled and quest.Parent and quest.Value == INVADE_QUEST_TEXT and waitCount < 60 do
+                    task.wait(1)
+                    waitCount = waitCount + 1
+                    quest = getCurrentQuest()
+                    if not quest then break end
+                end
+                if waitCount >= 60 then
+                    warn("[AUTO INVADE] Quest stuck, resetting...")
+                end
+                task.wait(1)
+                return
+            end
+
+            teleportTo(BASE_POSITION, 1)
+            local selectedCount = 0
+            for _, isSelected in pairs(SelectedInvadeMissions) do
+                if isSelected then selectedCount = selectedCount + 1 end
+            end
+            if selectedCount == 0 then
+                print("[AUTO INVADE] No missions selected!")
+                task.wait(3)
+                return
+            end
+
+            local activeMissions = activeFolder:GetChildren()
+            if #activeMissions == 0 then task.wait(3) return end
+            local targetMissions = {}
+            for _, folder in ipairs(activeMissions) do
+                if SelectedInvadeMissions[folder.Name] then
+                    table.insert(targetMissions, folder)
+                end
+            end
+            if #targetMissions == 0 then task.wait(3) return end
+            for i = #targetMissions, 1, -1 do
+                local j = math.random(i)
+                targetMissions[i], targetMissions[j] = targetMissions[j], targetMissions[i]
+            end
+            for _, folder in ipairs(targetMissions) do
+                if not InvadeEnabled then break end
+                pcall(function() interceptMission(folder.Name) end)
+                randomWait(0.5, 1)
+                local currentQuest = getCurrentQuest()
+                if currentQuest and currentQuest.Value == INVADE_QUEST_TEXT then
+                    print("[AUTO INVADE] Got quest!")
+                    task.wait(0.3)
+                    teleportTo(BASE_POSITION, 1)
+                    break
+                end
+            end
+        end)
+
+        if not success then
+            warn("[AUTO INVADE] Error:", err)
+            task.wait(3)
+        end
+    end
+
+    print("[AUTO INVADE] Stopped")
+end
+
+-- =====================================================
+-- AUTO LOOTBOX LOOP
+-- =====================================================
+local function startLootbox()
+    print("[AUTO LOOTBOX] Started")
+
+    while LootboxEnabled and Wait() do
+        local success, err = pcall(function()
+            randomWait(0.5, 1)
+            local lootboxIds = getLootboxIds()
+
+            if #lootboxIds == 0 then
+                print("[AUTO LOOTBOX] No lootboxes found, waiting...")
+                task.wait(3)
+                return
+            end
+
+            print("[AUTO LOOTBOX] Found", #lootboxIds, "lootboxes")
+
+            for _, lootboxId in ipairs(lootboxIds) do
+                if not LootboxEnabled then break end
+                print("[AUTO LOOTBOX] Opening:", lootboxId:sub(1, 8) .. "...")
+
+                pcall(function() openLootbox(lootboxId) end)
+                task.wait(2.5)
+
+                local itemNames = {}
+                for attempt = 1, 5 do
+                    local uiOk, lootboxList = pcall(function()
+                        return player.PlayerGui and player.PlayerGui:FindFirstChild("OnScreenEffects")
+                            and player.PlayerGui.OnScreenEffects:FindFirstChild("Lootbox")
+                            and player.PlayerGui.OnScreenEffects.Lootbox:FindFirstChild("List")
+                    end)
+                    if uiOk and lootboxList then
+                        for _, child in ipairs(lootboxList:GetChildren()) do
+                            local itemName = child.Name
+                            if not itemName:match("^UI") and
+                               not itemName:match("^_") and
+                               itemName ~= "" and
+                               #itemName > 2 then
+                                table.insert(itemNames, itemName)
+                            end
+                        end
+                    end
+                    if #itemNames > 0 then
+                        print("[AUTO LOOTBOX] Got", #itemNames, "items from UI (attempt", attempt .. ")")
+                        break
+                    end
+                    print("[AUTO LOOTBOX] UI empty, retrying... (" .. attempt .. "/5)")
+                    task.wait(0.5)
+                end
+
+                if #itemNames > 0 then
+                    for _, itemName in ipairs(itemNames) do
+                        if not LootboxEnabled then break end
+                        pcall(function() takeItem(itemName) end)
+                        print("[AUTO LOOTBOX] ✅ Took:", itemName)
+                        task.wait(0.3)
+                    end
+                else
+                    warn("[AUTO LOOTBOX] ⚠️ Could not read item list!")
+                end
+
+                task.wait(1)
+            end
+
+            task.wait(5)
+        end)
+
+        if not success then
+            warn("[AUTO LOOTBOX] Error:", err)
+            task.wait(3)
+        end
+    end
+
+    print("[AUTO LOOTBOX] Stopped")
+end
+
+-- =====================================================
+-- ANTI-AFK SYSTEM
+-- =====================================================
+local function startAntiAFK()
+    print("[ANTI-AFK] Started")
+
+    if player then
+        player.Idled:Connect(function()
+            if AntiAFKEnabled then
+                pcall(function()
+                    VirtualUser:CaptureController()
+                    VirtualUser:ClickButton2(Vector2.new())
+                end)
+            end
+        end)
+    end
+
+    while AntiAFKEnabled and Wait() do
+        local success, err = pcall(function()
+            randomWait(60, 120)
+            if not AntiAFKEnabled then return end
+            pcall(function()
+                VirtualInputManager:SendKeyEvent(true, Enum.KeyCode.Space, false, game)
+                task.wait(0.1)
+                VirtualInputManager:SendKeyEvent(false, Enum.KeyCode.Space, false, game)
+            end)
+        end)
+        if not success then
+            warn("[ANTI-AFK] Error:", err)
+            task.wait(5)
+        end
+    end
+
+    print("[ANTI-AFK] Stopped")
+end
+
+-- =====================================================
+-- UI TOGGLES
+-- =====================================================
+FarmingSection:AddToggle({
+    Name = "CleanUp",
+    Flag = "FarmingSection_CleanUp",
+    Callback = function(value)
+        CleanUpEnabled = value
+        if value then
+            if farmingLoop then task.cancel(farmingLoop) end
+            farmingLoop = task.spawn(startFarming)
+        else
+            if farmingLoop then task.cancel(farmingLoop) farmingLoop = nil end
+        end
+    end
+})
+
+FarmingSection:AddToggle({
+    Name = "Auto Invade",
+    Flag = "FarmingSection_AutoInvade",
+    Callback = function(value)
+        InvadeEnabled = value
+        if value then
+            if invadeLoop then task.cancel(invadeLoop) end
+            invadeLoop = task.spawn(startInvade)
+        else
+            if invadeLoop then task.cancel(invadeLoop) invadeLoop = nil end
+        end
+    end
+})
+
+FarmingSection:AddToggle({
+    Name = "Auto Lootbox",
+    Flag = "FarmingSection_AutoLootbox",
+    Callback = function(value)
+        LootboxEnabled = value
+        if value then
+            if lootboxLoop then task.cancel(lootboxLoop) end
+            lootboxLoop = task.spawn(startLootbox)
+        else
+            if lootboxLoop then task.cancel(lootboxLoop) lootboxLoop = nil end
+        end
+    end
+})
+
+FarmingSection:AddToggle({
+    Name = "Anti-AFK",
+    Flag = "FarmingSection_AntiAFK",
+    Callback = function(value)
+        AntiAFKEnabled = value
+        if value then
+            if antiAFKLoop then task.cancel(antiAFKLoop) end
+            antiAFKLoop = task.spawn(startAntiAFK)
+        else
+            if antiAFKLoop then task.cancel(antiAFKLoop) antiAFKLoop = nil end
+        end
+    end
+})
+
+FarmingSection:AddToggle({
+    Name = "Safe Spot",
+    Flag = "FarmingSection_SafeSpot",
+    Callback = function(value)
+        SafeSpotEnabled = value
+        if value then
+            startSafeSpot()
+        else
+            stopSafeSpot()
+        end
+    end
+})
+
+SellSection:AddToggle({
+    Name = "🔄 Auto Sell",
+    Flag = "SellSection_AutoSell",
+    Callback = function(value)
+        AutoSellEnabled = value
+        if value then
+            local hasSelection = false
+            for _, isSelected in pairs(SelectedItemsToSell) do
+                if isSelected then hasSelection = true break end
+            end
+            if not hasSelection then
+                print("[AUTO SELL] ⚠️ Please scan and select items first!")
+            end
+            if autoSellLoop then task.cancel(autoSellLoop) end
+            autoSellLoop = task.spawn(startAutoSell)
+        else
+            if autoSellLoop then task.cancel(autoSellLoop) autoSellLoop = nil end
+            print("[AUTO SELL] Disabled")
+        end
+    end
+})
+
+-- =====================================================
+-- STATUS DISPLAY
+-- =====================================================
+local StatusSection = GeneralTab:CreateSection({
+    Name = "Status"
+})
+
+local statusLabel = StatusSection:AddLabel({
+    Text = "Status: Idle"
+})
+
+task.spawn(function()
+    while Wait() do
+        task.wait(1)
+        local quest = getCurrentQuest()
+        local statusText = "Status: Idle"
+
+        if CleanUpEnabled and InvadeEnabled then
+            if quest then
+                statusText = "Status: " .. quest.Value:sub(1, 35) .. "..."
+            else
+                statusText = "Status: Looking for quest..."
+            end
+        elseif CleanUpEnabled then
+            if quest then
+                statusText = "CleanUp: " .. quest.Value:sub(1, 35) .. "..."
+            else
+                statusText = "CleanUp: Looking for quest..."
+            end
+        elseif InvadeEnabled then
+            if quest and quest.Value == INVADE_QUEST_TEXT then
+                statusText = "Invade: In progress..."
+            else
+                statusText = "Invade: Looking for quest..."
+            end
+        end
+
+        if LootboxEnabled then
+            local lootboxCount = #getLootboxIds()
+            statusText = statusText .. " | Lootbox: " .. lootboxCount
+        end
+
+        if AutoSellEnabled then
+            local _, itemsByName = getBackpackItems()
+            local selectedCount = 0
+            for itemName, isSelected in pairs(SelectedItemsToSell) do
+                if isSelected and itemsByName[itemName] then
+                    selectedCount = selectedCount + itemsByName[itemName]
+                end
+            end
+            statusText = statusText .. " | Sell: " .. selectedCount .. " items"
+        end
+
+        if AntiAFKEnabled then
+            statusText = statusText .. " | Anti-AFK: ON"
+        end
+
+        if SafeSpotEnabled and hrp then
+            local dist = math.floor((hrp.Position - SAFE_SPOT).Magnitude)
+            statusText = statusText .. " | Safe: " .. dist .. " studs"
+        end
+
+        pcall(function() statusLabel:SetText(statusText) end)
+    end
+end)
+
+print("[BARAMEE HUB] Loaded successfully! (ANIMATION-BASED CLEANUP)")
